@@ -1,6 +1,7 @@
 #!/usr/bin/env python2.7
 
 from contextlib import closing
+import traceback
 import hashlib
 import zlib
 import getpass
@@ -265,6 +266,40 @@ def record_single(db, barcode):
         c.execute('UPDATE log_single SET oper_cnt = ?, oper_sha256 = ? WHERE timestamp = ? AND barcode = ?',
                   (oper_cnt, oper_sha256, timestamp, barcode))
 
+def print_barcode(db, barcode):
+    ns = {'ns3': 'http://russianpost.org/operationhistory/data'}
+    c = db.cursor()
+    c.execute('SELECT resp_xmlz, timestamp '
+              'FROM (SELECT barcode, MAX(timestamp) AS timestamp FROM log_single WHERE barcode = ?) '
+              'JOIN log_single USING (barcode, timestamp) LIMIT 1', (barcode, ))
+    et, timestamp = c.fetchone()
+    et = ElementTree.fromstring(zlib.decompress(et))
+    header = et.findall('.//ns3:UserParameters/ns3:SendCtg/ns3:Id/../../..', ns)
+    if not header:
+        raise RuntimeError('No destination for', barcode)
+    if len(header) > 1:
+        print >>sys.stderr, len(header), 'destinations for', barcode
+    header = header[0]
+    out = u'{};\n'.format(barcode)
+    out += (u';{}*rus*[LOC[EVENT_SENDER]]: {}, [LOC[EVENT_RCPT]]: {}, [LOC[EVENT_TYPE]]: {}\n'.format(
+        time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(timestamp)),
+        header.find('ns3:UserParameters/ns3:Sndr', ns).text,
+        header.find('ns3:UserParameters/ns3:Rcpn', ns).text,
+        header.find('ns3:ItemParameters/ns3:ComplexItemName', ns).text
+    ))
+    for hr in et.findall('.//ns3:historyRecord', ns):
+        mass = hr.find('ns3:ItemParameters/ns3:Mass', ns)
+        mass = ', [LOC[EVENT_WEIGHT]]: {}[LOC[EVENT_WEIGHT_GRAM]]'.format(mass.text) if mass is not None else ''
+        out += (u';{}*rus*{}{}, {} {} {}\n'.format(
+            hr.find('ns3:OperationParameters/ns3:OperDate', ns).text.split('.', 1)[0],
+            hr.find('ns3:OperationParameters/ns3:OperAttr/ns3:Name', ns).text,
+            mass,
+            hr.find('ns3:AddressParameters/ns3:OperationAddress/ns3:Index', ns).text,
+            hr.find('ns3:AddressParameters/ns3:OperationAddress/ns3:Description', ns).text,
+            hr.find('ns3:AddressParameters/ns3:CountryOper/ns3:NameRU', ns).text
+        ))
+    sys.stdout.write(out.encode('utf-8'))
+
 def main():
     barcode_re = re.compile(r'^(?:[A-Z]{2}\d{9}[A-Z]{2}|\d{14})$')
     with closing(sqlite3.connect('ru-tracker.sqlite')) as db:
@@ -288,25 +323,25 @@ def main():
                         'WHERE valid.barcode = batch.barcode AND ticket IS NOT NULL AND ? < timestamp)',
             (ticket_birth,))
         stale = [_[0] for _ in c]
-        print len(stale), 'barcodes without fresh ticket'
+        print >>sys.stderr, len(stale), 'barcodes without fresh ticket'
         chunks = []
         while stale:
             chunks.append(stale[:TRACK_PER_TICKET])
             del stale[:TRACK_PER_TICKET]
-        print len(chunks), 'tickets to get'
+        print >>sys.stderr, len(chunks), 'tickets to get'
         for _ in chunks:
             record_ticket(db, _)
-        print 'Got all tickets'
+        print >>sys.stderr, 'Got all tickets'
 
         # FIXME: graceful delay!
         c.execute('SELECT batch_id, ticket FROM log_ticket tkt WHERE ticket IS NOT NULL AND ? < timestamp AND EXISTS '
                     '(SELECT 1 FROM batch WHERE tkt.batch_id = batch.batch_id AND oper_cnt IS NULL)',
             (ticket_birth,))
         fresh_tickets = list(c)
-        print len(fresh_tickets), 'tickets to validate'
+        print >>sys.stderr, len(fresh_tickets), 'tickets to validate'
         for batch_id, ticket in fresh_tickets:
             record_batch(db, batch_id, ticket)
-        print 'Validated all tickets'
+        print >>sys.stderr, 'Validated all tickets'
 
         # last timestamp for valid barcode
         c.execute('CREATE TEMPORARY TABLE last AS SELECT barcode, MAX(timestamp) AS timestamp '
@@ -319,13 +354,20 @@ def main():
         c.execute('SELECT barcode FROM valid v WHERE barcode NOT IN '
                     '(SELECT barcode FROM fresh JOIN log_single USING (barcode, oper_cnt, oper_sha256))')
         singles = [_[0] for _ in c]
-        print len(singles), 'barcodes to get'
+        print >>sys.stderr, len(singles), 'barcodes to get'
         report_point = len(singles) / 25
         for ndx, _ in enumerate(singles):
             record_single(db, _)
             if report_point and (ndx + 1) % report_point == 0:
-                print 'Got', ndx + 1, 'barcodes'
-        print 'Got all barcodes'
+                print >>sys.stderr, 'Got', ndx + 1, 'barcodes'
+        print >>sys.stderr, 'Got all barcodes'
+
+        for _ in barcodes:
+            try:
+                print_barcode(db, _)
+            except Exception, exc:
+                print >>sys.stderr, 'Unable to print', _
+                traceback.print_exc(file=sys.stderr)
 
 if __name__ == '__main__':
     main()
