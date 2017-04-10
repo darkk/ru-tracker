@@ -362,6 +362,7 @@ def main():
                 print >>sys.stderr, 'Got', ndx + 1, 'barcodes'
         print >>sys.stderr, 'Got all barcodes'
 
+        sys.stdout.write('id_Track;id_Event\n')
         for _ in barcodes:
             try:
                 print_barcode(db, _)
