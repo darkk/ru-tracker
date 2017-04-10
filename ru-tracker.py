@@ -11,6 +11,7 @@ import sqlite3
 import time
 import xml.etree.ElementTree as ElementTree
 
+import progressbar
 import requests
 
 # Global object for transparent gzip and keep-alive!
@@ -329,9 +330,11 @@ def main():
             chunks.append(stale[:TRACK_PER_TICKET])
             del stale[:TRACK_PER_TICKET]
         print >>sys.stderr, len(chunks), 'tickets to get'
-        for _ in chunks:
-            record_ticket(db, _)
-        print >>sys.stderr, 'Got all tickets'
+        if chunks:
+            pb = progressbar.ProgressBar(widgets=[progressbar.Counter(), '/{:d} tickets, '.format(len(chunks)), progressbar.ETA(), progressbar.Bar()])
+            for _ in pb(chunks):
+                record_ticket(db, _)
+            print >>sys.stderr, 'Got all tickets'
 
         # FIXME: graceful delay!
         c.execute('SELECT batch_id, ticket FROM log_ticket tkt WHERE ticket IS NOT NULL AND ? < timestamp AND EXISTS '
@@ -339,9 +342,11 @@ def main():
             (ticket_birth,))
         fresh_tickets = list(c)
         print >>sys.stderr, len(fresh_tickets), 'tickets to validate'
-        for batch_id, ticket in fresh_tickets:
-            record_batch(db, batch_id, ticket)
-        print >>sys.stderr, 'Validated all tickets'
+        if fresh_tickets:
+            pb = progressbar.ProgressBar(widgets=[progressbar.Counter(), '/{:d} validated, '.format(len(fresh_tickets)), progressbar.ETA(), progressbar.Bar()])
+            for batch_id, ticket in pb(fresh_tickets):
+                record_batch(db, batch_id, ticket)
+            print >>sys.stderr, 'Validated all tickets'
 
         # last timestamp for valid barcode
         c.execute('CREATE TEMPORARY TABLE last AS SELECT barcode, MAX(timestamp) AS timestamp '
@@ -355,12 +360,11 @@ def main():
                     '(SELECT barcode FROM fresh JOIN log_single USING (barcode, oper_cnt, oper_sha256))')
         singles = [_[0] for _ in c]
         print >>sys.stderr, len(singles), 'barcodes to get'
-        report_point = len(singles) / 25
-        for ndx, _ in enumerate(singles):
-            record_single(db, _)
-            if report_point and (ndx + 1) % report_point == 0:
-                print >>sys.stderr, 'Got', ndx + 1, 'barcodes'
-        print >>sys.stderr, 'Got all barcodes'
+        if singles:
+            pb = progressbar.ProgressBar(widgets=[progressbar.Counter(), '/{:d} barcodes, '.format(len(singles)), progressbar.ETA(), progressbar.Bar()])
+            for _ in pb(singles):
+                record_single(db, _)
+            print >>sys.stderr, 'Got all barcodes'
 
         sys.stdout.write('id_Track;id_Event\n')
         for _ in barcodes:

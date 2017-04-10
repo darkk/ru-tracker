@@ -2,7 +2,10 @@
 
 Клиент для API tracking.pochta.ru с поддержкой "докачки" информации.
 
-Требуется Python-2.7 и библиотека `requests` (тестировалось на requests-2.9.1).
+Требуется:
+- Python-2.7
+- `requests` (тестировалось на 2.9.1): `apt-get instlal python-requests`
+- `progressbar` (тестировалось на 2.3): `apt-get install python-progressbar`
 
 Запускать как `python ru-tracker.py rpo.txt >parsed.csv`.
 
@@ -25,4 +28,4 @@
 ### Почему такой странный формат вывода в псевдо-CSV?
 
 Для интеграции с существующей информационной системой ЦАФАП ОДД ГИБДД УМВД РФ
-по Омской обл.
+по Омской обл. вместо нестабильно работающего TrackChecker.
